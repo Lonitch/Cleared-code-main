@@ -1,0 +1,366 @@
+#
+#/**************************************************
+#* MTconnect adapter plugin for Cctoprint.         *
+#*                                                 *
+#* Jorge Correa                                    *
+#* Placid Ferreira                                 *
+#*                                                 *
+#* University of Illinois at urbana champaign      *
+#* fall 2017                                       *
+#*                                                 *
+#* DMDII project: Operating System for             *
+#* Cyberphysical Manufacturing                     *
+#*                                                 *
+#***************************************************/
+
+#/*
+# * An MTConnect adapter plugin for Octorprint that user can use to connect their 3D printer to OSCM
+# *
+# * References:
+# * Octoprint Hooks. octoprint.comm.protocol.gcode.received: http://docs.octoprint.org/en/master/plugins/hooks.html#octoprint-comm-protocol-gcode-received
+# * Octoprint.Event handler. Available events: http://docs.octoprint.org/en/master/events/index.html#sec-events-available-events
+# */
+
+# coding=utf-8
+from __future__ import absolute_import
+
+import octoprint.plugin
+import socket
+from threading import Thread
+import flask
+import time
+import datetime
+
+class MtcadapterPlugin(octoprint.plugin.StartupPlugin,    # a mixin (base class) plugging for  hooking into the startup of OctoPrint.
+					   octoprint.plugin.SettingsPlugin,   # allows users to customized the behaviour of your plugin
+                       octoprint.plugin.AssetPlugin,      # allows plugins to define additional static assets such as JavaScript or CSS files
+                       octoprint.plugin.TemplatePlugin,   # inject mixing pluging components into the OctoPrint web interface.
+					   octoprint.plugin.SimpleApiPlugin): # implement a simple API based around one GET resource and one POST resource
+	##~~ MtcadapterPlugin private variables
+	def __init__(self):
+		##~~ TCP socket initialization
+		self.port = 7171
+
+		##~~ server thread initialization
+		self.is_serving = False
+		self.update_delay = 1                        ## time interterval to request a position update
+		self.comm_delay = 1                          ## time interval to send a posotion update to the printer
+		self.t = Thread(target=self.thread_server)
+
+		##~~ machine state vector
+		self.state ={}
+
+	##~~ Startup mixing
+	def on_after_startup(self):
+		self.t.start()
+:		self._logger.info("Hello MTConnect Adapter!. Default port:%s" % int(self._settings.get(["port"]))) # logger and
+
+	##~~ SettingsPlugin mixin
+	def get_settings_defaults(self):
+		return dict(
+			# put your plugin's default settings here
+			port=self.port,
+			comm_delay=self.comm_delay,
+			update_delay=self.update_delay
+		)
+
+	def get_template_configs(self):
+		return [
+			dict(type="settings", custom_bindings=False)
+		]
+
+	##~~ SimpleApiPlugin mixin
+	def get_api_commands(self):
+		return dict(
+			start=[],
+			stop=[]
+		)
+
+	def on_api_command(self, command, data):
+		# notified the user
+		self._logger.info("API command \"{command}\" received".format(**locals()))
+
+		if command == "start":
+			# check that the server is not already started
+			if self.is_serving:
+				self._logger.info("Error: Server already started")
+				return flask.jsonify(success=False)
+
+			# start the socket thread
+			self.is_serving = True
+			# return
+			return flask.jsonify(success=True)
+
+		if command == "stop":
+			# check that the server is running
+			if not self.is_serving:
+				return flask.jsonify(success=False)
+
+			# stop the socket thread
+			self.is_serving = False
+			# return
+			return flask.jsonify(success=True)
+
+	##~~ AssetPlugin mixin
+	def get_assets(self):
+		# Define your plugin's asset files to automatically include in the
+		# core UI here.
+		return dict(
+			js=["js/mtcadapter.js"],
+			css=["css/mtcadapter.css"],
+			less=["less/mtcadapter.less"]
+		)
+
+	##~~ Softwareupdate hook
+	def get_update_information(self):
+		# Define the configuration for your plugin to use with the Software Update
+		# Plugin here. See https://github.com/foosel/OctoPrint/wiki/Plugin:-Software-Update
+		# for details.
+		return dict(
+			mtcadapter=dict(
+				displayName="Mtcadapter Plugin",
+				displayVersion=self._plugin_version,
+
+				# version check: github repository
+				type="github_release",
+				user="jcorre20",
+				repo="OctoPrint-Mtcadapter",
+				current=self._plugin_version,
+
+				# update method: pip
+				pip="https://github.com/jcorre20/OctoPrint-Mtcadapter/archive/{target_version}.zip"
+			)
+		)
+
+	##~~ gcode received hook
+	def detect_position_update(self, comm_instance, line, *args, **kwargs):
+		# if does not have a value for X, return
+		if "ok" not in line or "X:" not in line:
+			return line
+
+		from octoprint.util.comm import parse_firmware_line
+
+		# parse the actual state of the printer
+		state = self.parse_printer_data()
+
+		# Create a dict with all the keys/values returned by the M114 request
+		position = parse_firmware_line(line)
+
+		# append state and axis information to the state
+		self.state = state
+		self.state['xpos'] = position['X']
+		self.state['ypos'] = position['Y']
+		self.state['zpos'] = position['Z']
+		self.state['epos'] = position['E'].replace("Count:", "")
+
+		#self._logger.info("state: {self.state}".format(**locals()))
+
+		return line
+
+	##~~ Class utilities
+	def parse_printer_data(self):
+		printer_data = self._printer.get_current_data()
+
+		#self._logger.info("printer data: {printer_data}".format(**locals()))
+
+		# initialize state
+		state = {}
+
+		# progress
+		state['completion'] = printer_data['progress']['completion']
+		state['filepos'] = printer_data['progress']['filepos']
+		state['printTime'] = printer_data['progress']['printTime']
+		state['printTimeLeft'] = printer_data['progress']['printTimeLeft']
+		#state['printTimeOrigin'] = printer_data['progress']['printTimeOrigin']
+
+		# state
+		state['text'] = printer_data['state']['text']
+		# state - flags
+		state['flags'] = printer_data['state']['flags']['cancelling']
+		state['paused'] = printer_data['state']['flags']['paused']
+		state['operational'] = printer_data['state']['flags']['operational']
+		state['pausing'] = printer_data['state']['flags']['pausing']
+		state['printing'] = printer_data['state']['flags']['printing']
+		state['resuming'] = printer_data['state']['flags']['resuming']
+		state['sdReady'] = printer_data['state']['flags']['sdReady']
+		state['error'] = printer_data['state']['flags']['error']
+		state['ready'] = printer_data['state']['flags']['ready']
+		state['finishing'] = printer_data['state']['flags']['finishing']
+		state['closedOrError'] = printer_data['state']['flags']['closedOrError']
+
+		# job
+		state['estimatedPrintTime'] = printer_data['job']['estimatedPrintTime']
+		state['user'] = printer_data['job']['user']
+		state['lastPrintTime'] = printer_data['job']['lastPrintTime']
+		# job-file
+		state['filedate'] = printer_data['job']['file']['date']
+		state['fileorigin'] = printer_data['job']['file']['origin']
+		state['filesize'] = printer_data['job']['file']['size']
+		state['filename'] = printer_data['job']['file']['name']
+		state['filepath'] = printer_data['job']['file']['path']
+		# job-filament
+		#state['filamentvolume'] = printer_data['job']['filament']['volume']
+		#state['filamentlength'] = printer_data['job']['filament']['length']
+
+		return state
+
+	def printer_to_mtc(self):
+		## time in UTC format YYYY-MM-DDTHH:MM:SS.FFFZ
+		now = datetime.datetime.now()
+		_formated_time = now.strftime('%Y-%m-%d %H:%M:%S:%fZ')
+
+		## mtc string
+		result = _formated_time
+		if self.state['xpos'] is not None:
+			result += "|xpos|" + str(self.state['xpos'])
+
+		if self.state['ypos'] is not None:
+			result += "|ypos|" + str(self.state['ypos'])
+
+		if self.state['zpos'] is not None:
+			result += "|zpos|" + str(self.state['zpos'])
+
+		if self.state['epos'] is not None:
+			result += "|epos|" + str(self.state['epos'])
+
+		if self.state['completion'] is not None:
+			result += "|completion|" + str(self.state['completion'])
+
+		if self.state['filepos'] is not None:
+			result += "|filepos|" + str(self.state['filepos'])
+
+		if self.state['printTime'] is not None:
+			result += "|printTime|" + str(self.state['printTime'])
+
+		if self.state['printTimeLeft'] is not None:
+			result += "|printTimeLeft|" + str(self.state['printTimeLeft'])
+
+		if self.state['text'] is not None:
+			result += "|text|" + str(self.state['text'])
+
+		if self.state['flags'] is not None:
+			result += "|flags|" + str(self.state['flags'])
+
+		if self.state['paused'] is not None:
+			result += "|paused|" + str(self.state['paused'])
+
+		if self.state['operational'] is not None:
+			result += "|operational|" + str(self.state['operational'])
+
+		if self.state['pausing'] is not None:
+			result += "|pausing|" + str(self.state['pausing'])
+
+		if self.state['printing'] is not None:
+			result += "|printing|" + str(self.state['printing'])
+
+		if self.state['resuming'] is not None:
+			result += "|resuming|" + str(self.state['resuming'])
+
+		if self.state['sdReady'] is not None:
+			result += "|sdReady|" + str(self.state['sdReady'])
+
+		if self.state['error'] is not None:
+			result += "|error|" + str(self.state['error'])
+
+		if self.state['ready'] is not None:
+			result += "|ready|" + str(self.state['ready'])
+
+		if self.state['finishing'] is not None:
+			result += "|finishing|" + str(self.state['finishing'])
+
+		if self.state['closedOrError'] is not None:
+			result += "|closedOrError|" + str(self.state['closedOrError'])
+
+		if self.state['estimatedPrintTime'] is not None:
+			result += "|estimatedPrintTime|" + str(self.state['estimatedPrintTime'])
+
+		if self.state['user'] is not None:
+			result += "|user|" + str(self.state['user'])
+
+		if self.state['lastPrintTime'] is not None:
+			result += "|lastPrintTime|" + str(self.state['lastPrintTime'])
+
+		if self.state['filedate'] is not None:
+			result += "|filedate|" + str(self.state['filedate'])
+
+		if self.state['fileorigin'] is not None:
+			result += "|fileorigin|" + str(self.state['fileorigin'])
+
+		if self.state['filesize'] is not None:
+			result += "|filesize|" + str(self.state['filesize'])
+
+		if self.state['filename'] is not None:
+			result += "|filename|" + str(self.state['filename'])
+
+		if self.state['filepath'] is not None:
+			result += "|filepath|" + str(self.state['filepath'])
+
+		return result
+
+	def on_new_client(self, clientsocket, addr):
+		self._logger.info("New client connected: {addr}".format(**locals()))
+		mtc_str = ""
+		while self.is_serving:
+			# generate stream
+			try:
+				mtc_str = self.printer_to_mtc()
+			except Exception as e:
+				print(e)
+
+			# send to client
+			try:
+				clientsocket.send(mtc_str)
+				self._logger.info("MTConnect adapter send: {mtc_str}".format(**locals()))
+			except socket.error:
+				self._logger.info("Client:{addr} disconnected".format(**locals()))
+				break
+			time.sleep(float(self._settings.get(["comm_delay"])))  # wait
+
+		clientsocket.close()
+
+	def thread_server(self):
+		# recursion to update machine state information
+		tu = Thread(target=self.update_printer_state)
+		tu.start()
+		# bins socket to the current port in settings
+		ip = '127.0.0.1'
+		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		s.bind((ip, int(self._settings.get(["port"]))))
+		s.listen(1)
+		self._logger.info(" MTConnect Adapter: Socket listing")
+
+		# wait for client connections
+		while 1:
+			if self.is_serving:
+				try:
+					conn, addr = s.accept()
+					tc = Thread(target=self.on_new_client, args=(conn, addr))
+					tc.start()
+				except socket.timeout:
+					pass
+		# close socket
+		s.close()
+		# stop updating recursion
+		tu.join()
+
+	def update_printer_state(self):
+		while 1:
+			if self.is_serving:
+				self._printer.commands(" M114")
+				time.sleep(float(self._settings.get(["update_delay"])))  # wait
+
+# If you want your plugin to be registered within OctoPrint under a different name than what you defined in setup.py
+# ("OctoPrint-PluginSkeleton"), you may define that here. Same goes for the other metadata derived from setup.py that
+# can be overwritten via __plugin_xyz__ control properties. See the documentation for that.
+__plugin_name__ = "Mtcadapter Plugin"
+
+def __plugin_load__():
+	global __plugin_implementation__
+	__plugin_implementation__ = MtcadapterPlugin()
+
+	global __plugin_hooks__
+	__plugin_hooks__ = {
+		"octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
+		"octoprint.comm.protocol.gcode.received": __plugin_implementation__.detect_position_update
+	}
+

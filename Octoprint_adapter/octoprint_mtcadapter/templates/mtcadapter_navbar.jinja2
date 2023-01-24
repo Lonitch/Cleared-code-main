@@ -1,0 +1,75 @@
+<!--
+/*
+* mtcadapter_navbar.jinja2.
+* Navbar icon for MTConnect adapter server connection and disconnection.
+*
+* Author: Jorge E. Correa
+* University Of Illinois at Urbana
+*
+* References:
+* 1. Octorpint emergency stop plugin: https://github.com/BrokenFire/OctoPrint-SimpleEmergencyStop
+*
+*/
+-->
+
+<!-- navbar button -->
+<a data-bind="click: changeServerStatus"  title="{{ _('Start MTConnect server') }}" href="#">
+    <i class="icon-exchange" style="color: black"></i>
+</a>
+
+<!-- connect server dialog -->
+<div id="connect_server" class="modal hide fade">
+    <div class="modal-header">
+        <a href="#" class="close" data-dismiss="modal" aria-hidden="true">&times;</a>
+        <h3>MTConnect adapter server</h3>
+    </div>
+    <div class="modal-body">
+        <p>{{ _('MTConnect adapter server is down') }}</p>
+    </div>
+    <div class="modal-footer">
+        <a href="#" class="btn btn-success" data-bind="click: startServer">{{ _('Start') }}</a>
+        <a href="#" class="btn" data-dismiss="modal" aria-hidden="true">{{ _('Cancel') }}</a>
+    </div>
+</div>
+
+<!-- disconnect server dialog -->
+<div id="disconnect_server" class="modal hide fade">
+    <div class="modal-header">
+        <a href="#" class="close" data-dismiss="modal" aria-hidden="true">&times;</a>
+        <h3>MTConnect adapter server</h3>
+    </div>
+    <div class="modal-body">
+        <p>{{ _('MTConnect adapter server is up') }}</p>
+    </div>
+    <div class="modal-footer">
+        <a href="#" class="btn btn-danger" data-bind="click: stopServer">{{ _('Stop') }}</a>
+        <a href="#" class="btn" data-dismiss="modal" aria-hidden="true">{{ _('Cancel') }}</a>
+    </div>
+</div>
+
+<!-- server-response dialogs -->
+<!-- start -->
+<div class="alert alert-success" id="success-start">
+    <button type="button" class="close" data-dismiss="alert">x</button>
+    <strong>Success! </strong>
+    Adapter server is up.
+</div>
+
+<div class="alert alert-danger" id="failure-start">
+    <button type="button" class="close" data-dismiss="alert">x</button>
+    <strong>Failure! </strong>
+    Adapter server is down.
+</div>
+
+<!-- stop -->
+<div class="alert alert-success" id="success-stop">
+    <button type="button" class="close" data-dismiss="alert">x</button>
+    <strong>Success! </strong>
+    Adapter server down.
+</div>
+
+<div class="alert alert-danger" id="failure-stop">
+    <button type="button" class="close" data-dismiss="alert">x</button>
+    <strong>Failure! </strong>
+    Adapter server is up.
+</div>

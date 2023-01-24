@@ -1,0 +1,21 @@
+<h3>{{_("MTConnect Adapter")}}</h3>
+<form class="form-horizontal">
+    <div class="control-group">
+        <label class="control-label">{{ _('Adapter port:') }}</label>
+        <div class="controls">
+            <input type="number" class="input-block-level" data-bind="value: settings.plugins.mtcadapter.port">
+        </div>
+        <label class="control-label">{{ _('Communications delay:') }}</label>
+        <div class="controls">
+            <input type="number" class="input-block-level" data-bind="value: settings.plugins.mtcadapter.comm_delay">
+        </div>
+        <label class="control-label">{{ _('Communications delay:') }}</label>
+        <div class="controls">
+            <input type="number" class="input-block-level" data-bind="value: settings.plugins.mtcadapter.update_delay">
+        </div>
+        <label class="control-label">{{ _('IP address:') }}</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.mtcadapter.ip">
+        </div>
+    </div>
+</form>
